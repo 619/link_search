@@ -13,6 +13,8 @@ export const Result: FC<{ query: string; rid: string }> = ({ query, rid }) => {
   const [markdown, setMarkdown] = useState<string>("");
   const [relates, setRelates] = useState<Relate[] | null>(null);
   const [error, setError] = useState<number | null>(null);
+  console.log('16: ', query, rid)
+  
   useEffect(() => {
     const controller = new AbortController();
     void parseStreaming(

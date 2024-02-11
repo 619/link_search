@@ -18,7 +18,7 @@ export const parseStreaming = async (
   let uint8Array = new Uint8Array();
   let chunks = "";
   let sourcesEmitted = false;
-  const response = await fetch(`/query`, {
+  const response = await fetch(`/${encodeURIComponent(query)}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

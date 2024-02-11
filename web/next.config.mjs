@@ -17,7 +17,15 @@ export default (phase, { defaultConfig }) => {
           {
             source: "/query",
             destination: "http://localhost:8080/query" // Proxy to Backend
-          }
+          },
+          // {
+          //   source: "/:slug*",
+          //   destination: "http://localhost:8080/search?q=:slug*" // Redirect any path to the search page with the path as query
+          // }
+          {
+              source: "/:slug*",
+              destination: "http://localhost:8080/query" // Redirect any path to the search page with the path as query
+            }
         ];
       }
     };

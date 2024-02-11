@@ -8,7 +8,7 @@ import requests
 import traceback
 from typing import Annotated, List, Generator, Optional
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Path
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 import httpx
 from loguru import logger
@@ -317,7 +317,7 @@ class RAG(Photon):
             # at https://search-api.lepton.run/ to do the search and RAG, which
             # runs the same code (slightly modified and might contain improvements)
             # as this demo.
-            "BACKEND": "LEPTON",
+            "BACKEND": "openrouter",
             # If you are using google, specify the search cx.
             "GOOGLE_SEARCH_CX": "",
             # Specify the LLM model you are going to use.
@@ -391,7 +391,13 @@ class RAG(Photon):
                 timeout=httpx.Timeout(connect=10, read=120, write=120, pool=10),
             )
         elif self.backend == "BING":
-            self.search_api_key = os.environ["BING_SEARCH_V7_SUBSCRIPTION_KEY"]
+            self.search_api_key = ""
+            self.search_function = lambda query: search_with_bing(
+                query,
+                self.search_api_key,
+            )
+        elif self.backend == "openrouter":
+            self.search_api_key = os.environ["OPENROUTER_API_KEY"]
             self.search_function = lambda query: search_with_bing(
                 query,
                 self.search_api_key,
@@ -535,36 +541,193 @@ class RAG(Photon):
         # ignore it, because we don't want to affect the user experience.
         _ = self.executor.submit(self.kv.put, search_uuid, "".join(all_yielded_results))
 
-    @Photon.handler(method="POST", path="/query")
+    # @Photon.handler(method="GET", path="/{query}")
+    # def query_function(
+    #     self,
+    #     query: str = Path(..., description="The user query extracted from the URL path"),
+    #     generate_related_questions: Optional[bool] = True,
+    # ) -> StreamingResponse:
+    #     """
+    #     Query the search engine and returns the response based on the query obtained from the URL path.
+
+    #     Parameters:
+    #     - query: the user query extracted from the URL path.
+    #     - generate_related_questions: if set to false, will not generate related
+    #     questions. Otherwise, will depend on the environment variable
+    #     RELATED_QUESTIONS. Default: true.
+    #     """
+
+    #     # Assuming `search_uuid` is no longer directly provided in this scenario
+    #     # You might generate a `search_uuid` based on the query or manage caching differently
+    #     search_uuid = f"generated_or_cached_identifier_for_{query}"
+
+    #     if search_uuid:
+    #         try:
+    #             result = self.kv.get(search_uuid)
+
+    #             def str_to_generator(result: str) -> Generator[str, None, None]:
+    #                 yield result
+
+    #             return StreamingResponse(str_to_generator(result))
+    #         except KeyError:
+    #             logger.info(f"Key {search_uuid} not found, will generate again.")
+    #         except Exception as e:
+    #             logger.error(f"KV error: {e}\n{traceback.format_exc()}, will generate again.")
+    #     else:
+    #         # If no search_uuid could be determined, handle accordingly
+    #         raise HTTPException(status_code=400, detail="Unable to process the query.")
+
+    # @Photon.handler(method="POST", path="/{query}")
+    # def query_function(
+    #     self,
+    #     query: str,
+    #     search_uuid: str,
+    #     generate_related_questions: Optional[bool] = True,
+    # ) -> StreamingResponse:
+    #     """
+    #     Query the search engine and returns the response.
+
+    #     The query can have the following fields:
+    #         - query: the user query.
+    #         - search_uuid: a uuid that is used to store or retrieve the search result. If
+    #             the uuid does not exist, generate and write to the kv. If the kv
+    #             fails, we generate regardless, in favor of availability. If the uuid
+    #             exists, return the stored result.
+    #         - generate_related_questions: if set to false, will not generate related
+    #             questions. Otherwise, will depend on the environment variable
+    #             RELATED_QUESTIONS. Default: true.
+    #     """
+    #     # Note that, if uuid exists, we don't check if the stored query is the same
+    #     # as the current query, and simply return the stored result. This is to enable
+    #     # the user to share a searched link to others and have others see the same result.
+    #     if search_uuid:
+    #         try:
+    #             result = self.kv.get(search_uuid)
+
+    #             def str_to_generator(result: str) -> Generator[str, None, None]:
+    #                 yield result
+
+    #             return StreamingResponse(str_to_generator(result))
+    #         except KeyError:
+    #             logger.info(f"Key {search_uuid} not found, will generate again.")
+    #         except Exception as e:
+    #             logger.error(
+    #                 f"KV error: {e}\n{traceback.format_exc()}, will generate again."
+    #             )
+    #     else:
+    #         raise HTTPException(status_code=400, detail="search_uuid must be provided.")
+
+    #     if self.backend == "LEPTON":
+    #         # delegate to the lepton search api.
+    #         result = self.leptonsearch_client.query(
+    #             query=query,
+    #             search_uuid=search_uuid,
+    #             generate_related_questions=generate_related_questions,
+    #         )
+    #         return StreamingResponse(content=result, media_type="text/html")
+    #     elif self.backend == "openrouter":
+    #         print('587: openrouter backend being triggered')
+    #         # Make an HTTP request to your LLM API (OpenRouter in this case)
+    #         api_url = "https://openrouter.ai/api/v1/chat/completions"
+    #         api_key = os.environ["OPENROUTER_API_KEY"]  # Replace with your actual API key
+    #         llm_model = "mistralai/mistral-7b-instruct"  # Replace with your desired LLM model
+    #         main_screening_prompt = query  # Use the user's query as the prompt
+
+    #         headers = {
+    #             "Authorization": f"Bearer {api_key}",
+    #             "Content-Type": "application/json"
+    #         }
+
+    #         payload = {
+    #             "model": llm_model,
+    #             "messages": [
+    #                 {"role": "user", "content": main_screening_prompt}
+    #             ]
+    #         }
+
+    #         try:
+    #             response = requests.post(api_url, headers=headers, json=payload)
+
+    #             if response.status_code == 200:
+    #                 result = response.text  # or parse the response JSON, if applicable
+    #                 return StreamingResponse(content=result, media_type="text/html")
+    #             else:
+    #                 # Handle error response from your LLM API
+    #                 logger.error(f"LLM API error: {response.status_code} - {response.text}")
+    #         except Exception as e:
+    #             # Handle exceptions if the request fails
+    #             logger.error(f"Error while making LLM API request: {str(e)}")
+
+    #     # First, do a search query.
+    #     query = query or _default_query
+    #     # Basic attack protection: remove "[INST]" or "[/INST]" from the query
+    #     query = re.sub(r"\[/?INST\]", "", query)
+    #     contexts = self.search_function(query)
+
+    #     system_prompt = _rag_query_text.format(
+    #         context="\n\n".join(
+    #             [f"[[citation:{i+1}]] {c['snippet']}" for i, c in enumerate(contexts)]
+    #         )
+    #     )
+    #     try:
+    #         client = self.local_client()
+    #         llm_response = client.chat.completions.create(
+    #             model=self.model,
+    #             messages=[
+    #                 {"role": "system", "content": system_prompt},
+    #                 {"role": "user", "content": query},
+    #             ],
+    #             max_tokens=1024,
+    #             stop=stop_words,
+    #             stream=True,
+    #             temperature=0.9,
+    #         )
+    #         if self.should_do_related_questions and generate_related_questions:
+    #             # While the answer is being generated, we can start generating
+    #             # related questions as a future.
+    #             related_questions_future = self.executor.submit(
+    #                 self.get_related_questions, query, contexts
+    #             )
+    #         else:
+    #             related_questions_future = None
+    #     except Exception as e:
+    #         logger.error(f"encountered error: {e}\n{traceback.format_exc()}")
+    #         return HTMLResponse("Internal server error.", 503)
+
+    #     return StreamingResponse(
+    #         self.stream_and_upload_to_kv(
+    #             contexts, llm_response, related_questions_future, search_uuid
+    #         ),
+    #         media_type="text/html",
+    #     )
+
+    @Photon.handler(method="GET", path="/{query}")
     def query_function(
         self,
-        query: str,
-        search_uuid: str,
+        query: str = Path(..., description="The user query extracted from the URL path"),
         generate_related_questions: Optional[bool] = True,
     ) -> StreamingResponse:
         """
-        Query the search engine and returns the response.
+        Query the search engine and returns the response based on the query obtained from the URL path.
 
-        The query can have the following fields:
-            - query: the user query.
-            - search_uuid: a uuid that is used to store or retrieve the search result. If
-                the uuid does not exist, generate and write to the kv. If the kv
-                fails, we generate regardless, in favor of availability. If the uuid
-                exists, return the stored result.
-            - generate_related_questions: if set to false, will not generate related
-                questions. Otherwise, will depend on the environment variable
-                RELATED_QUESTIONS. Default: true.
+        Parameters:
+        - query: the user query extracted from the URL path.
+        - generate_related_questions: if set to false, will not generate related
+        questions. Otherwise, will depend on the environment variable
+        RELATED_QUESTIONS. Default: true.
         """
-        # Note that, if uuid exists, we don't check if the stored query is the same
-        # as the current query, and simply return the stored result. This is to enable
-        # the user to share a searched link to others and have others see the same result.
+
+        # Assuming `search_uuid` is no longer directly provided in this scenario
+        # You might generate a `search_uuid` based on the query or manage caching differently
+        search_uuid = f"generated_or_cached_identifier_for_{query}"
+
         if search_uuid:
             try:
                 result = self.kv.get(search_uuid)
 
                 def str_to_generator(result: str) -> Generator[str, None, None]:
                     yield result
-
+                print('730: ')
                 return StreamingResponse(str_to_generator(result))
             except KeyError:
                 logger.info(f"Key {search_uuid} not found, will generate again.")
@@ -582,7 +745,41 @@ class RAG(Photon):
                 search_uuid=search_uuid,
                 generate_related_questions=generate_related_questions,
             )
+            print('748: ')
             return StreamingResponse(content=result, media_type="text/html")
+        elif self.backend == "openrouter":
+            print('587: openrouter backend being triggered')
+            # Make an HTTP request to your LLM API (OpenRouter in this case)
+            api_url = "https://openrouter.ai/api/v1/chat/completions"
+            api_key = os.environ["OPENROUTER_API_KEY"]  # Replace with your actual API key
+            llm_model = "mistralai/mistral-7b-instruct"  # Replace with your desired LLM model
+            main_screening_prompt = query  # Use the user's query as the prompt
+
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+
+            payload = {
+                "model": llm_model,
+                "messages": [
+                    {"role": "user", "content": main_screening_prompt}
+                ]
+            }
+
+            try:
+                response = requests.get(api_url, headers=headers, json=payload)
+
+                if response.status_code == 200:
+                    result = response.text  # or parse the response JSON, if applicable
+                    print('775: ')
+                    return StreamingResponse(content=result, media_type="text/html")
+                else:
+                    # Handle error response from your LLM API
+                    logger.error(f"LLM API error: {response.status_code} - {response.text}")
+            except Exception as e:
+                # Handle exceptions if the request fails
+                logger.error(f"Error while making LLM API request: {str(e)}")
 
         # First, do a search query.
         query = query or _default_query
@@ -619,7 +816,7 @@ class RAG(Photon):
         except Exception as e:
             logger.error(f"encountered error: {e}\n{traceback.format_exc()}")
             return HTMLResponse("Internal server error.", 503)
-
+        # print('819: ', contexts, llm_response, related_questions_future, search_uuid)
         return StreamingResponse(
             self.stream_and_upload_to_kv(
                 contexts, llm_response, related_questions_future, search_uuid
@@ -627,16 +824,17 @@ class RAG(Photon):
             media_type="text/html",
         )
 
+
     @Photon.handler(mount=True)
     def ui(self):
         return StaticFiles(directory="ui")
 
-    @Photon.handler(method="GET", path="/")
-    def index(self) -> RedirectResponse:
-        """
-        Redirects "/" to the ui page.
-        """
-        return RedirectResponse(url="/ui/index.html")
+    # @Photon.handler(method="GET", path="/")
+    # def index(self) -> RedirectResponse:
+    #     """
+    #     Redirects "/" to the ui page.
+    #     """
+    #     return RedirectResponse(url="/ui/index.html")
 
 
 if __name__ == "__main__":
